@@ -53,26 +53,29 @@ The command below uses:
 --c_out 9
 ```
 
-## 4xA100 DDP Example
+## DDP Multi-GPU Example
 
 Use `torchrun` for multi-GPU training. Do not launch multi-GPU training with plain `python run.py`; DDP needs one process per GPU.
 
 The provided Slurm script is:
 
 ```bash
-scripts/imputation/daphnet_script/GraphNet_point_ddp_a100.sh
+scripts/imputation/daphnet_script/GraphNet_point_ddp.sh
 ```
 
-Submit it with:
+GPU type and GPU count are controlled by the Slurm submission command and environment variables, not hardcoded in the script. Use the GPU type and count available on your cluster:
 
 ```bash
-sbatch scripts/imputation/daphnet_script/GraphNet_point_ddp_a100.sh
+NUM_GPUS=<N> DEVICES=<comma-separated-local-ids> sbatch --gres=gpu:<gpu_type>:<N> scripts/imputation/daphnet_script/GraphNet_point_ddp.sh
+
+# Example with four visible GPUs:
+NUM_GPUS=4 DEVICES=0,1,2,3 sbatch --gres=gpu:<gpu_type>:4 scripts/imputation/daphnet_script/GraphNet_point_ddp.sh
 ```
 
 The core launch command is:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nnodes=1 --nproc_per_node=4 run.py \
+NUM_GPUS=4 DEVICES=0,1,2,3 torchrun --standalone --nnodes=1 --nproc_per_node="${NUM_GPUS}" run.py \
   --mask 0 \
   --patience 3 \
   --num_edges 5 \
@@ -81,7 +84,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nnodes=1 --nproc_per_node=4
   --task_name imputation_graph \
   --is_training 1 \
   --root_path ./dataset/daphnet_data/ \
-  --model_id GraphNet_Daphnet_point_mask_0.1_4a100_ddp \
+  --model_id GraphNet_Daphnet_point_mask_0.1_4gpu_ddp \
   --mask_rate 0.1 \
   --model GraphNet \
   --data Daphnet \
@@ -103,10 +106,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nnodes=1 --nproc_per_node=4
   --top_k 3 \
   --learning_rate 0.0001 \
   --use_multi_gpu \
-  --devices 0,1,2,3
+  --devices "${DEVICES}"
 ```
 
-In DDP mode, `--batch_size` is treated as the global batch size. For example, with `--batch_size 64` and 4 GPUs, each A100 receives a per-process batch size of 16. This keeps the optimization setup comparable to single-GPU experiments and avoids changing the effective batch size unintentionally.
+In DDP mode, `--batch_size` is treated as the global batch size. For example, with `--batch_size 64` and `NUM_GPUS=4`, each process receives a per-GPU batch size of 16. This keeps the optimization setup comparable when you change the GPU count.
 
 ## Outputs
 
@@ -120,11 +123,11 @@ classification/
 Records/
 ```
 
-The 4xA100 Slurm script writes logs to:
+The DDP script writes logs to:
 
 ```text
-Records/Daphnet/mask_0.1/GraphNet_Daphnet_point_mask_0.1_4a100_ddp.txt
-Records/Daphnet/mask_0.1/GraphNet_Daphnet_point_mask_0.1_4a100_ddp_time.txt
+Records/Daphnet/mask_0.1/<MODEL_ID>.txt
+Records/Daphnet/mask_0.1/<MODEL_ID>_time.txt
 ```
 
 ## Notes For Reproducible Experiments
@@ -134,7 +137,7 @@ Records/Daphnet/mask_0.1/GraphNet_Daphnet_point_mask_0.1_4a100_ddp_time.txt
 - `--num_edges` is passed into dynamic graph construction.
 - DDP validation losses are reduced across ranks.
 - Only rank 0 saves checkpoints and final test outputs.
-- Keep `--learning_rate 0.0001` with the 4xA100 example unless you intentionally change the global batch size.
+- Keep `--learning_rate 0.0001` unless you intentionally change the global batch size.
 
 ## Single-GPU Fallback
 
