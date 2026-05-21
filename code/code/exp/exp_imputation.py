@@ -346,6 +346,9 @@ class Exp_Imputation(Exp_Basic):
 
         test_data, test_loader = self._get_data(flag='test', distributed=False)
         model = self.unwrap_model()
+        old_sync_distributed_periods = getattr(model, 'sync_distributed_periods', None)
+        if getattr(self.args, 'distributed', False) and old_sync_distributed_periods is not None:
+            model.sync_distributed_periods = False
         if test:
             print('loading model')
             print("Layer parameters before loading:")
@@ -493,6 +496,8 @@ class Exp_Imputation(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
+        if old_sync_distributed_periods is not None:
+            model.sync_distributed_periods = old_sync_distributed_periods
         if getattr(self.args, 'distributed', False):
             self.barrier()
         return

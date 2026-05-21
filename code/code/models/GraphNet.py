@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from layers.Transformer_EncDec import Decoder, DecoderLayer, Encoder, EncoderLayer
 from layers.SelfAttention_Family import DSAttention, AttentionLayer
 from layers.Embed import DataEmbedding
@@ -107,17 +108,19 @@ def visualize_attention(batch_idx, layer_data, num_nodes=9):
     # plt.show()
     plt.savefig("tmp.png")
     
-def FFT_for_Period(x, k=3):
+def FFT_for_Period(x, k=3, sync_distributed=False):
     # [B, T, C]
     # pdb.set_trace()
     xf = torch.fft.rfft(x, dim=1)
     # find period by amplitudes
     frequency_list = abs(xf).mean(0).mean(-1)
+    if sync_distributed and dist.is_available() and dist.is_initialized():
+        dist.all_reduce(frequency_list, op=dist.ReduceOp.SUM)
+        frequency_list /= dist.get_world_size()
     frequency_list[0] = -float('inf')
     _, top_list = torch.topk(frequency_list, k)
     top_list = top_list.clamp_min(1)
-    top_list = top_list.detach().cpu().numpy()
-    period = x.shape[1] // top_list
+    period = (x.shape[1] // top_list).detach().cpu().tolist()
     return period, abs(xf).mean(-1)[:, top_list]
 
 
@@ -279,10 +282,14 @@ class FrequencyGraphModel(nn.Module):
         max_freq = max(1, seq_len // 2)
         return sorted({max(1, seq_len // freq) for freq in range(1, max_freq + 1)})
     
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, sync_distributed_periods=False):
         self.x=x
         B, T, N = x.size() # [64,96,64]
-        period_list, period_weight = FFT_for_Period(x, self.k)
+        period_list, period_weight = FFT_for_Period(
+            x,
+            self.k,
+            sync_distributed=sync_distributed_periods,
+        )
         results = []
 
         # pdb.set_trace()
@@ -570,6 +577,7 @@ class Model(nn.Module):
         self.lin = nn.Linear(in_features=configs.c_out, out_features=configs.d_model)
         # self.lin2=nn.Linear(128, 64)
         self.lin3=nn.Linear(configs.d_model, configs.c_out)
+        self.sync_distributed_periods = True
         
 
     def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
@@ -593,7 +601,17 @@ class Model(nn.Module):
         
         # 频率图处理
         # pdb.set_trace()
-        out,period_list=self.frequency_graph_model(x_enc, edge_index)
+        sync_distributed_periods = (
+            self.sync_distributed_periods
+            and dist.is_available()
+            and dist.is_initialized()
+            and dist.get_world_size() > 1
+        )
+        out,period_list=self.frequency_graph_model(
+            x_enc,
+            edge_index,
+            sync_distributed_periods=sync_distributed_periods,
+        )
         graph_out = self.graph_norm(x_enc +out)
         
         # 获取注意力数据
