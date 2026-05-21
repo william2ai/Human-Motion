@@ -70,6 +70,12 @@ def data_provider(args, flag, distributed=None):
     if distributed is None:
         distributed = getattr(args, 'distributed', False)
     if distributed:
+        if args.batch_size < args.world_size or args.batch_size % args.world_size != 0:
+            raise ValueError(
+                f'DDP treats --batch_size as the global batch size, so it must be '
+                f'divisible by world_size. Got batch_size={args.batch_size}, '
+                f'world_size={args.world_size}.'
+            )
         batch_size = max(1, args.batch_size // args.world_size)
     freq = args.freq
 

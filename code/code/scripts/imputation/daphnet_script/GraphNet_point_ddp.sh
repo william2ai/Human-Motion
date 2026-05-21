@@ -47,6 +47,20 @@ PY
 )
 fi
 
+VISIBLE_GPU_COUNT=$(python - <<'PY'
+import os
+visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+if visible and visible != "NoDevFiles":
+    print(len([d for d in visible.split(",") if d.strip()]))
+else:
+    print("")
+PY
+)
+if [[ -n "${VISIBLE_GPU_COUNT}" && "${VISIBLE_GPU_COUNT}" -lt "${NUM_GPUS}" ]]; then
+    echo "ERROR: NUM_GPUS=${NUM_GPUS}, but CUDA_VISIBLE_DEVICES exposes only ${VISIBLE_GPU_COUNT} device(s): ${CUDA_VISIBLE_DEVICES}"
+    exit 2
+fi
+
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-2}"
 
 RUN_TAG="${RUN_TAG:-${NUM_GPUS}gpu_ddp}"

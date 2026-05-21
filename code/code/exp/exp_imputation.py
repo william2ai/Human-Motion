@@ -151,9 +151,8 @@ class Exp_Imputation(Exp_Basic):
 
                 masked = mask == 0
                 if masked.any():
-                    loss = criterion(outputs[masked], batch_x[masked])
-                    total_loss += loss.item()
-                    total_count += 1
+                    total_loss += F.mse_loss(outputs[masked], batch_x[masked], reduction='sum').item()
+                    total_count += masked.sum().item()
 
         if getattr(self.args, 'distributed', False):
             stats = torch.tensor([total_loss, total_count], device=self.device, dtype=torch.float64)
@@ -280,7 +279,10 @@ class Exp_Imputation(Exp_Basic):
                 
                 masked = mask == 0
                 loss_values = F.mse_loss(outputs, batch_x, reduction='none')
-                weighted_loss = (loss_values * weight_mask)[masked].mean()
+                if masked.any():
+                    weighted_loss = (loss_values * weight_mask)[masked].mean()
+                else:
+                    weighted_loss = outputs.sum() * 0.0
                 loss = weighted_loss
 
                 train_loss.append(weighted_loss.item())

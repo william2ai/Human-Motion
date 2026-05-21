@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 # from torch_scatter import scatter_softmax
 # import torch_scatter
-from torch_geometric.utils import add_self_loops, degree
+from torch_geometric.utils import add_self_loops, degree, softmax as pyg_softmax
 import pdb
 import numpy as np
 import math
@@ -450,12 +450,8 @@ class AttentionGraphConvLayer(MessagePassing):
         
         edge_weights = self.edge_weights[:num_edges].repeat(batch_size)
         
-        softmax_weights = torch.zeros_like(edge_weights).to(device)
         dst_nodes = edge_index_flat[1]
-        unique_dst = torch.unique(dst_nodes)
-        for dst in unique_dst:
-            mask = (dst_nodes == dst)
-            softmax_weights[mask] = F.softmax(edge_weights[mask], dim=0)
+        softmax_weights = pyg_softmax(edge_weights, dst_nodes)
         
         if not self.training:
             self.batch_edge_data = {
@@ -490,21 +486,9 @@ def create_graph(x_enc, top_k=3):
     diag_idx = torch.arange(N, device=device)
     similarity_matrix[:, diag_idx, diag_idx] = -float('inf')
     
-    # 为每个样本生成独立的边索引
-    batch_edge_indices = []
-    for b in range(B):
-        edge_pairs = []
-        for src in range(N):
-            # 获取top_k+1相似节点（排除自己）
-            _, top_indices = torch.topk(similarity_matrix[b, src], k=top_k)
-            for dst in top_indices.tolist():
-                edge_pairs.append([src, dst])
-        # 去重并转换为tensor - 确保在正确设备上
-        edge_tensor = torch.tensor(edge_pairs, device=device, dtype=torch.long).t().contiguous()
-        batch_edge_indices.append(edge_tensor)
-    
-    # 堆叠所有batch的边索引 [B, 2, num_edges]
-    return torch.stack(batch_edge_indices, dim=0)
+    top_indices = torch.topk(similarity_matrix, k=top_k, dim=-1).indices
+    src_indices = torch.arange(N, device=device).view(1, N, 1).expand(B, N, top_k)
+    return torch.stack((src_indices, top_indices), dim=1).reshape(B, 2, N * top_k).contiguous()
 
 class NodeAwareEmbedding(nn.Module):
     def __init__(self, num_nodes, d_model, dropout=0.1):

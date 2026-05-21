@@ -75,7 +75,7 @@ NUM_GPUS=4 DEVICES=0,1,2,3 sbatch --gres=gpu:<gpu_type>:4 scripts/imputation/dap
 The core launch command is:
 
 ```bash
-NUM_GPUS=4 DEVICES=0,1,2,3 torchrun --standalone --nnodes=1 --nproc_per_node="${NUM_GPUS}" run.py \
+CUDA_VISIBLE_DEVICES=<comma-separated-gpu-ids> torchrun --standalone --nnodes=1 --nproc_per_node=<N> run.py \
   --mask 0 \
   --patience 3 \
   --num_edges 5 \
@@ -106,10 +106,10 @@ NUM_GPUS=4 DEVICES=0,1,2,3 torchrun --standalone --nnodes=1 --nproc_per_node="${
   --top_k 3 \
   --learning_rate 0.0001 \
   --use_multi_gpu \
-  --devices "${DEVICES}"
+  --devices <comma-separated-gpu-ids>
 ```
 
-In DDP mode, `--batch_size` is treated as the global batch size. For example, with `--batch_size 64` and `NUM_GPUS=4`, each process receives a per-GPU batch size of 16. This keeps the optimization setup comparable when you change the GPU count.
+In DDP mode, `--batch_size` is treated as the global batch size and must be divisible by the number of processes. For example, with `--batch_size 64` and 4 GPUs, each process receives a per-GPU batch size of 16. This keeps the optimization setup comparable when you change the GPU count.
 
 ## Outputs
 

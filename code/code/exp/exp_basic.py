@@ -51,11 +51,13 @@ class Exp_Basic(object):
         self.device = self._acquire_device()
         model = self._build_model().to(self.device)
         if getattr(args, 'distributed', False):
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = DDP(
                 model,
                 device_ids=[args.local_rank],
                 output_device=args.local_rank,
                 find_unused_parameters=True,
+                gradient_as_bucket_view=True,
             )
         self.model = model
 
