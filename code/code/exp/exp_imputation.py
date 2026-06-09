@@ -151,8 +151,9 @@ class Exp_Imputation(Exp_Basic):
 
                 masked = mask == 0
                 if masked.any():
-                    total_loss += F.mse_loss(outputs[masked], batch_x[masked], reduction='sum').item()
-                    total_count += masked.sum().item()
+                    loss = criterion(outputs[masked], batch_x[masked])
+                    total_loss += loss.item()
+                    total_count += 1
 
         if getattr(self.args, 'distributed', False):
             stats = torch.tensor([total_loss, total_count], device=self.device, dtype=torch.float64)
