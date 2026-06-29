@@ -4,7 +4,6 @@ from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.distributed as dist
 from torch import optim
 import os
@@ -278,13 +277,11 @@ class Exp_Imputation(Exp_Basic):
                     weight_mask[block_mask == 0] = 10.0  # Higher weight for blocked areas
                     weight_mask[(point_mask == 0) & (block_mask == 1)] = 1.0  # Lower weight for point_mask areas
                 
-                masked = mask == 0
-                loss_values = F.mse_loss(outputs, batch_x, reduction='none')
-                if masked.any():
-                    weighted_loss = (loss_values * weight_mask)[masked].mean()
-                else:
-                    weighted_loss = outputs.sum() * 0.0
-                loss = weighted_loss
+                # # Calculate loss with weights
+                loss = criterion(outputs[mask == 0], batch_x[mask == 0])
+                
+                
+                weighted_loss = (loss * weight_mask[mask == 0]).mean()  # Apply weights to loss
 
                 train_loss.append(weighted_loss.item())
 
@@ -296,7 +293,7 @@ class Exp_Imputation(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-                weighted_loss.backward()
+                loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)  # Gradient clipping
                 model_optim.step()
 
@@ -347,9 +344,6 @@ class Exp_Imputation(Exp_Basic):
 
         test_data, test_loader = self._get_data(flag='test', distributed=False)
         model = self.unwrap_model()
-        old_sync_distributed_periods = getattr(model, 'sync_distributed_periods', None)
-        if getattr(self.args, 'distributed', False) and old_sync_distributed_periods is not None:
-            model.sync_distributed_periods = False
         if test:
             print('loading model')
             print("Layer parameters before loading:")
@@ -497,8 +491,6 @@ class Exp_Imputation(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
-        if old_sync_distributed_periods is not None:
-            model.sync_distributed_periods = old_sync_distributed_periods
         if getattr(self.args, 'distributed', False):
             self.barrier()
         return

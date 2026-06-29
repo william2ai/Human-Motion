@@ -31,3 +31,5 @@ dataset/
 *.npz
 *.pth
 *.pt
+
+original/

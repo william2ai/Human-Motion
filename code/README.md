@@ -104,7 +104,7 @@ CUDA_VISIBLE_DEVICES=<comma-separated-gpu-ids> torchrun --standalone --nnodes=1 
   --des Exp \
   --itr 1 \
   --top_k 3 \
-  --learning_rate 0.0001 \
+  --learning_rate 0.001 \
   --use_multi_gpu \
   --devices <comma-separated-gpu-ids>
 ```
@@ -137,7 +137,7 @@ Records/Daphnet/mask_0.1/<MODEL_ID>_time.txt
 - `--num_edges` is passed into dynamic graph construction.
 - DDP validation losses are reduced across ranks.
 - Only rank 0 saves checkpoints and final test outputs.
-- Keep `--learning_rate 0.0001` unless you intentionally change the global batch size.
+- Keep `--learning_rate 0.001` unless you intentionally change the global batch size.
 
 ## Single-GPU Fallback
 
@@ -169,5 +169,5 @@ CUDA_VISIBLE_DEVICES=0 python -u run.py \
   --des Exp \
   --itr 1 \
   --top_k 3 \
-  --learning_rate 0.0001
+  --learning_rate 0.001
 ```

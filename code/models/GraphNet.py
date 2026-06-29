@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.distributed as dist
 from layers.Transformer_EncDec import Decoder, DecoderLayer, Encoder, EncoderLayer
 from layers.SelfAttention_Family import DSAttention, AttentionLayer
 from layers.Embed import DataEmbedding
@@ -8,7 +7,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 # from torch_scatter import scatter_softmax
 # import torch_scatter
-from torch_geometric.utils import add_self_loops, degree, softmax as pyg_softmax
+from torch_geometric.utils import add_self_loops, degree
 import pdb
 import numpy as np
 import math
@@ -108,19 +107,16 @@ def visualize_attention(batch_idx, layer_data, num_nodes=9):
     # plt.show()
     plt.savefig("tmp.png")
     
-def FFT_for_Period(x, k=3, sync_distributed=False):
+def FFT_for_Period(x, k=3):
     # [B, T, C]
     # pdb.set_trace()
     xf = torch.fft.rfft(x, dim=1)
     # find period by amplitudes
     frequency_list = abs(xf).mean(0).mean(-1)
-    if sync_distributed and dist.is_available() and dist.is_initialized():
-        dist.all_reduce(frequency_list, op=dist.ReduceOp.SUM)
-        frequency_list /= dist.get_world_size()
-    frequency_list[0] = -float('inf')
+    frequency_list[0] = 0
     _, top_list = torch.topk(frequency_list, k)
-    top_list = top_list.clamp_min(1)
-    period = (x.shape[1] // top_list).detach().cpu().tolist()
+    top_list = top_list.detach().cpu().numpy()
+    period = x.shape[1] // top_list
     return period, abs(xf).mean(-1)[:, top_list]
 
 
@@ -259,7 +255,7 @@ class FrequencyGraphModel(nn.Module):
         self.k = configs.top_k
         self.d_model = configs.d_model
         self.num_sensors = configs.num_sensors
-        self.num_edges = min(configs.num_edges, configs.num_sensors - 1)
+        self.num_edges = min(3, configs.num_sensors - 1)
         self.attention_data = {} 
         
         periods = self._possible_periods(self.seq_len)
@@ -282,14 +278,10 @@ class FrequencyGraphModel(nn.Module):
         max_freq = max(1, seq_len // 2)
         return sorted({max(1, seq_len // freq) for freq in range(1, max_freq + 1)})
     
-    def forward(self, x, edge_index, sync_distributed_periods=False):
+    def forward(self, x, edge_index):
         self.x=x
         B, T, N = x.size() # [64,96,64]
-        period_list, period_weight = FFT_for_Period(
-            x,
-            self.k,
-            sync_distributed=sync_distributed_periods,
-        )
+        period_list, period_weight = FFT_for_Period(x, self.k)
         results = []
 
         # pdb.set_trace()
@@ -441,37 +433,42 @@ class AttentionGraphConvLayer(MessagePassing):
         
     #     return out.permute(0,2,1)
     def forward(self, x, edge_index):
-            # 确保输入在正确设备上
+            # ??????????
         device = x.device
         edge_index = edge_index.to(device)
 
-        # 处理形状
+        # ????
         B, N, T, _ = x.shape
-        x = self.lin(x.mean(dim=2)).reshape(B * N, -1)
+        x = self.lin(x.mean(dim=2)).reshape(B, N, -1)
         
-        # Build a disjoint batched graph so each sample uses its own dynamic edges.
+        # ????
         batch_size = edge_index.shape[0]
-        num_edges = edge_index.size(-1)
-        offsets = torch.arange(batch_size, device=device).view(batch_size, 1, 1) * N
-        edge_index_flat = (edge_index + offsets).permute(1, 0, 2).contiguous().view(2, -1)
+        edge_index_flat = edge_index.view(2, -1)
         
-        edge_weights = self.edge_weights[:num_edges].repeat(batch_size)
-        
+        # ?????
+        src_nodes = edge_index_flat[0]
         dst_nodes = edge_index_flat[1]
-        softmax_weights = pyg_softmax(edge_weights, dst_nodes)
+        edge_weights = self.edge_weights[src_nodes] * self.edge_weights[dst_nodes]
+        
+        # ??????????
+        unique_dst = torch.unique(dst_nodes)
+        softmax_weights = torch.zeros_like(edge_weights).to(device)
+        for dst in unique_dst:
+            mask = (dst_nodes == dst)
+            softmax_weights[mask] = F.softmax(edge_weights[mask], dim=0)
         
         if not self.training:
             self.batch_edge_data = {
                 "edge_index": edge_index.cpu().detach().numpy(),
-                "attention_weights": softmax_weights.view(batch_size, num_edges).cpu().detach().numpy()
+                "attention_weights": softmax_weights.view(batch_size, edge_index.size(-1)).cpu().detach().numpy()
             }
         else:
             self.batch_edge_data = None
         
-        # 传播
+        # ??
         out = self.propagate(edge_index_flat, x=x, edge_weights=softmax_weights)
         
-        return out.view(B, N, -1).permute(0, 2, 1)
+        return out.permute(0, 2, 1)
     
     def message(self, x_j, edge_weights):
         activated_weights = F.leaky_relu(edge_weights, negative_slope=0.2)
@@ -481,21 +478,30 @@ class AttentionGraphConvLayer(MessagePassing):
 
 
 def create_graph(x_enc, top_k=3):
-    # """在batch内动态生成图结构"""
+    # """?batch????????"""
     B, T, N = x_enc.shape
-    top_k = max(1, min(int(top_k), N - 1))
-    device = x_enc.device  # 获取输入数据的设备
+    device = x_enc.device  # ?????????
     
-    # 计算每个batch独立的相似度矩阵
+    # ????batch????????
     x_reshaped = x_enc.permute(0, 2, 1)  # [B, N, T]
     norm = torch.norm(x_reshaped, dim=2, keepdim=True)  # [B, N, 1]
-    similarity_matrix = torch.matmul(x_reshaped, x_reshaped.transpose(1,2)) / (norm * norm.transpose(1,2)).clamp_min(1e-6)
-    diag_idx = torch.arange(N, device=device)
-    similarity_matrix[:, diag_idx, diag_idx] = -float('inf')
+    similarity_matrix = torch.matmul(x_reshaped, x_reshaped.transpose(1,2)) / (norm * norm.transpose(1,2))
     
-    top_indices = torch.topk(similarity_matrix, k=top_k, dim=-1).indices
-    src_indices = torch.arange(N, device=device).view(1, N, 1).expand(B, N, top_k)
-    return torch.stack((src_indices, top_indices), dim=1).reshape(B, 2, N * top_k).contiguous()
+    # ?????????????
+    batch_edge_indices = []
+    for b in range(B):
+        edge_pairs = []
+        for src in range(N):
+            # ??top_k+1??????????
+            _, top_indices = torch.topk(similarity_matrix[b, src], k=top_k+1)
+            for dst in top_indices[1:].tolist():
+                edge_pairs.append([src, dst])
+        # ??????tensor - ????????
+        edge_tensor = torch.unique(torch.tensor(edge_pairs, device=device), dim=0).t()
+        batch_edge_indices.append(edge_tensor)
+    
+    # ????batch???? [B, 2, num_edges]
+    return torch.stack(batch_edge_indices, dim=0)
 
 class NodeAwareEmbedding(nn.Module):
     def __init__(self, num_nodes, d_model, dropout=0.1):
@@ -577,7 +583,6 @@ class Model(nn.Module):
         self.lin = nn.Linear(in_features=configs.c_out, out_features=configs.d_model)
         # self.lin2=nn.Linear(128, 64)
         self.lin3=nn.Linear(configs.d_model, configs.c_out)
-        self.sync_distributed_periods = True
         
 
     def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
@@ -593,7 +598,7 @@ class Model(nn.Module):
         x_enc /= stdev
         
         
-        edge_index = create_graph(x_enc, self.configs.num_edges)
+        edge_index = create_graph(x_enc)
         
         x_enc_tcn = self.tcn_enc_embedding(x_enc, x_mark_enc)
         
@@ -601,17 +606,7 @@ class Model(nn.Module):
         
         # 频率图处理
         # pdb.set_trace()
-        sync_distributed_periods = (
-            self.sync_distributed_periods
-            and dist.is_available()
-            and dist.is_initialized()
-            and dist.get_world_size() > 1
-        )
-        out,period_list=self.frequency_graph_model(
-            x_enc,
-            edge_index,
-            sync_distributed_periods=sync_distributed_periods,
-        )
+        out,period_list=self.frequency_graph_model(x_enc, edge_index)
         graph_out = self.graph_norm(x_enc +out)
         
         # 获取注意力数据
@@ -628,14 +623,14 @@ class Model(nn.Module):
         graph_proj = self.lin(graph_out)  # Query
         
         
-        # attn_out = F.scaled_dot_product_attention(graph_proj, tcn_out, tcn_out)  # (64, 96, 64)   
-        # residual_out = attn_out + tcn_out 
+        attn_out = F.scaled_dot_product_attention(graph_proj, tcn_out, tcn_out)  # (B, L, d_model)
+        residual_out = attn_out + tcn_out
         
         
         # Replace the attention with a linear transformation
         # linear_out = self.lin2(graph_proj)  # Apply a linear layer
         # Combine with tcn_out (residual connection)
-        residual_out = graph_proj + tcn_out  # Perform residual addition
+        # residual_out = graph_proj + tcn_out  # Ablation: direct residual addition
         
         
         dec_out = self.norm(self.lin3(residual_out))

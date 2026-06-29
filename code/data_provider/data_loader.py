@@ -264,7 +264,7 @@ class DaphnetLoader(Dataset):
 
         # pdb.set_trace()
         file_pattern = os.path.join(root_path, '*.txt')
-        self.files = sorted(glob.glob(file_pattern))
+        self.files = glob.glob(file_pattern)
         self.freq=freq
         
         self.__read_data__()
@@ -412,7 +412,7 @@ class RealdispLoader(Dataset):
         
 
         file_pattern = os.path.join(root_path, '*_ideal.log')
-        self.files = sorted(glob.glob(file_pattern))
+        self.files = glob.glob(file_pattern)
         self.freq=freq
         
         self.__read_data__()

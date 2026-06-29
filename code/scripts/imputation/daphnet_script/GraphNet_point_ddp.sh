@@ -16,7 +16,19 @@ source "${CONDA_PROFILE:-/ibex/user/luy0f/miniconda3/etc/profile.d/conda.sh}"
 conda activate "${CONDA_ENV:-freqtemp}"
 
 cd "${PROJECT_DIR:-/ibex/user/luy0f/work/FreqTempNet}"
-mkdir -p checkpoints results test_results classification/Daphnet/0.1_point Records/Daphnet/mask_0.1
+
+MASK_TYPE_VALUE="${MASK_TYPE:-0}"
+MASK_RATE_VALUE="${MASK_RATE:-0.1}"
+case "${MASK_TYPE_VALUE}" in
+    0) MASK_MODE="point" ;;
+    1) MASK_MODE="block" ;;
+    2) MASK_MODE="combined" ;;
+    *) echo "ERROR: MASK_TYPE must be 0, 1, or 2. Got ${MASK_TYPE_VALUE}"; exit 2 ;;
+esac
+
+mkdir -p checkpoints results test_results \
+    "classification/Daphnet/${MASK_RATE_VALUE}_${MASK_MODE}" \
+    "Records/Daphnet/mask_${MASK_RATE_VALUE}"
 
 if [[ -n "${DEVICES:-}" ]]; then
     export CUDA_VISIBLE_DEVICES="${DEVICES}"
@@ -64,9 +76,9 @@ fi
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-2}"
 
 RUN_TAG="${RUN_TAG:-${NUM_GPUS}gpu_ddp}"
-MODEL_ID="${MODEL_ID:-GraphNet_Daphnet_point_mask_0.1_${RUN_TAG}}"
-LOG_FILE="${LOG_FILE:-Records/Daphnet/mask_0.1/${MODEL_ID}.txt}"
-TIME_FILE="${TIME_FILE:-Records/Daphnet/mask_0.1/${MODEL_ID}_time.txt}"
+MODEL_ID="${MODEL_ID:-GraphNet_Daphnet_${MASK_MODE}_mask_${MASK_RATE_VALUE}_${RUN_TAG}}"
+LOG_FILE="${LOG_FILE:-Records/Daphnet/mask_${MASK_RATE_VALUE}/${MODEL_ID}.txt}"
+TIME_FILE="${TIME_FILE:-Records/Daphnet/mask_${MASK_RATE_VALUE}/${MODEL_ID}_time.txt}"
 
 echo "Job started on $(hostname) at $(date)"
 echo "cwd=$(pwd)"
@@ -99,7 +111,7 @@ echo "Training command started at $(date)" | tee "$TIME_FILE"
 
 CMD=(
   torchrun --standalone --nnodes=1 --nproc_per_node="${NUM_GPUS}" run.py
-  --mask "${MASK_TYPE:-0}"
+  --mask "${MASK_TYPE_VALUE}"
   --patience "${PATIENCE:-3}"
   --num_edges "${NUM_EDGES:-5}"
   --num_sensors "${NUM_SENSORS:-9}"
@@ -108,7 +120,7 @@ CMD=(
   --is_training 1
   --root_path "${ROOT_PATH:-./dataset/daphnet_data/}"
   --model_id "${MODEL_ID}"
-  --mask_rate "${MASK_RATE:-0.1}"
+  --mask_rate "${MASK_RATE_VALUE}"
   --model "${MODEL_NAME:-GraphNet}"
   --data "${DATA_NAME:-Daphnet}"
   --features M
@@ -122,12 +134,12 @@ CMD=(
   --dec_in "${DEC_IN:-9}"
   --c_out "${C_OUT:-9}"
   --batch_size "${BATCH_SIZE:-64}"
-  --num_workers "${NUM_WORKERS:-2}"
+  --num_workers "${NUM_WORKERS:-0}"
   --d_model "${D_MODEL:-64}"
   --des "${DESCRIPTION:-Exp}"
   --itr 1
   --top_k "${TOP_K:-3}"
-  --learning_rate "${LEARNING_RATE:-0.0001}"
+  --learning_rate "${LEARNING_RATE:-0.001}"
   --use_multi_gpu
   --devices "${DEVICES}"
 )
