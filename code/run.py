@@ -64,7 +64,6 @@ def init_distributed_mode(args):
 
 def cleanup_distributed(args):
     if getattr(args, 'distributed', False) and dist.is_initialized():
-        dist.barrier()
         dist.destroy_process_group()
 
 

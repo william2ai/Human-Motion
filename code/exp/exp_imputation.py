@@ -337,9 +337,7 @@ class Exp_Imputation(Exp_Basic):
     
     def test(self, setting, test=0):
         if getattr(self.args, 'distributed', False):
-            self.barrier()
             if not self.is_main_process:
-                self.barrier()
                 return
 
         test_data, test_loader = self._get_data(flag='test', distributed=False)
@@ -491,6 +489,4 @@ class Exp_Imputation(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
-        if getattr(self.args, 'distributed', False):
-            self.barrier()
         return
